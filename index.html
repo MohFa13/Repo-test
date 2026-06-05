@@ -1,290 +1,383 @@
-/* ============================================================
-   story.js — scroll engine, chapter nav, scene choreography
-   ============================================================ */
-(function () {
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const hasGSAP = typeof gsap !== 'undefined' && typeof ScrollTrigger !== 'undefined';
-  if (hasGSAP) gsap.registerPlugin(ScrollTrigger);
+<!DOCTYPE html>
+<html lang="en" data-accent="balanced">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WPS Office — Build Your Smart Office Workflow</title>
+<meta name="description" content="An interactive, cinematic journey from scattered work to one AI-powered WPS Office workflow — documents, spreadsheets, slides, PDF tools, cloud sync and AI in one workspace." />
+<meta property="og:title" content="Build Your Smart Office Workflow — WPS Office" />
+<meta property="og:description" content="From scattered work to one AI-powered WPS Office workflow." />
+<meta property="og:image" content="assets/keyart-hero.png" />
 
-  /* ---------------- Lenis smooth scroll ---------------- */
-  let lenis = null;
-  if (!reduceMotion && typeof Lenis !== 'undefined') {
-    lenis = new Lenis({ lerp: 0.075, wheelMultiplier: 1, smoothWheel: true });
-    if (hasGSAP) {
-      lenis.on('scroll', ScrollTrigger.update);
-      gsap.ticker.add(function (t) { lenis.raf(t * 1000); });
-      gsap.ticker.lagSmoothing(0);
-      // Pins (#slides, #pdf) + dynamically-built content grow the page AFTER
-      // Lenis init. Recompute Lenis's scroll limit on every ScrollTrigger refresh,
-      // otherwise the bottom of the page becomes unreachable by smooth scroll.
-      ScrollTrigger.addEventListener('refresh', function () { lenis.resize(); });
-    } else {
-      function raf(t) { lenis.raf(t); requestAnimationFrame(raf); }
-      requestAnimationFrame(raf);
-    }
-  }
-  function scrollToId(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (lenis) lenis.scrollTo(el, { offset: -10, duration: 1.2 });
-    else window.scrollTo({ top: el.getBoundingClientRect().top + window.pageYOffset - 8, behavior: 'auto' });
-  }
-  window.WPS_SCROLL_TO = scrollToId;
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-  /* ---------------- Topbar + nav reveal + progress ---------------- */
-  const topbar = document.getElementById('topbar');
-  const nav = document.getElementById('chapter-nav');
-  const bgScene = document.getElementById('bg-scene');
-  const keyart = document.getElementById('keyart');
-  if (bgScene && !reduceMotion) bgScene.style.transition = 'opacity 0.35s linear';
-  if (keyart) keyart.style.transition = 'opacity 0.5s linear';
-  const progress = nav ? nav.querySelector('.nav-progress > i') : null;
-  function onScroll() {
-    const y = window.pageYOffset;
-    topbar.classList.toggle('scrolled', y > 40);
-    nav.classList.toggle('show', y > window.innerHeight * 0.6);
-    if (progress) {
-      const max = document.documentElement.scrollHeight - window.innerHeight;
-      progress.style.width = Math.min(100, (y / max) * 100) + '%';
-    }
-    // fade the WebGL backdrop + key-art out as we leave the hero (clamped: full at top)
-    const s = window.innerHeight * 0.55, e = window.innerHeight * 1.15;
-    const k = Math.min(1, Math.max(0, (y - s) / (e - s)));
-    if (bgScene && bgScene.classList.contains('ready')) bgScene.style.opacity = (1 - k * 0.86).toFixed(3);
-    if (keyart) { keyart.style.opacity = (1 - k).toFixed(3); keyart.style.transform = 'translateY(' + (k * -6) + '%)'; }
-    if (y < window.innerHeight * 0.5 && window.WPS_SET_TINT) window.WPS_SET_TINT('hero');
-  }
-  window.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
+<link rel="stylesheet" href="css/tokens.css" />
+<link rel="stylesheet" href="css/layout.css" />
+<link rel="stylesheet" href="css/chapters.css" />
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
 
-  /* ---------------- Nav clicks + active state ---------------- */
-  const navItems = Array.prototype.slice.call(nav.querySelectorAll('.nav-item'));
-  navItems.forEach(function (it) {
-    it.addEventListener('click', function () { scrollToId(it.dataset.target); });
-  });
-  function setActive(id) {
-    navItems.forEach(function (it) {
-      it.setAttribute('aria-current', it.dataset.target === id ? 'true' : 'false');
-    });
-    if (window.WPS_SET_TINT) window.WPS_SET_TINT(id);
-  }
-  // smooth-scroll all in-page anchors
-  document.querySelectorAll('a[href^="#"]').forEach(function (a) {
-    a.addEventListener('click', function (e) {
-      const id = a.getAttribute('href').slice(1);
-      if (id && document.getElementById(id)) { e.preventDefault(); scrollToId(id); }
-    });
-  });
+<!-- Generated cinematic key-art + WebGL background -->
+<div class="keyart" id="keyart" aria-hidden="true"></div>
+<div class="scene-tint" id="scene-tint" aria-hidden="true"></div>
+<div class="spotlight" id="spotlight" aria-hidden="true"></div>
+<canvas id="bg-scene" aria-hidden="true"></canvas>
+<div class="atmosphere" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
 
-  if (hasGSAP) {
-    (window.WPS_CHAPTERS || []).forEach(function (c) {
-      ScrollTrigger.create({
-        trigger: '#' + c.id, start: 'top 55%', end: 'bottom 45%',
-        onToggle: function (self) { if (self.isActive) setActive(c.id); }
-      });
-    });
-  }
+<!-- ============ TOPBAR ============ -->
+<header class="topbar" id="topbar">
+  <a class="brand" href="#hero" aria-label="SmartOffice Guide home">
+    <span class="brand-mark">S</span>
+    <span class="brand-name">SmartOffice<small>WORKFLOW GUIDE</small></span>
+  </a>
+  <div class="topbar-cta">
+    <span class="affil-tag">AFFILIATE&nbsp;•&nbsp;WPS OFFICE</span>
+    <a class="btn btn--primary" href="#" data-affiliate>Get WPS Office <span class="arrow">→</span></a>
+  </div>
+</header>
 
-  /* ---------------- Reveals (rAF-driven, layout-based — bulletproof) ---------------- */
-  if (reduceMotion) {
-    document.querySelectorAll('.reveal').forEach(function (e) { e.classList.add('in'); });
-  } else {
-    const revealEls = Array.prototype.slice.call(document.querySelectorAll('.reveal:not(.in)'));
-    function checkReveals() {
-      const trig = window.innerHeight * 0.9;
-      for (let i = revealEls.length - 1; i >= 0; i--) {
-        const r = revealEls[i].getBoundingClientRect();
-        if (r.top < trig && r.bottom > -200) { revealEls[i].classList.add('in'); revealEls.splice(i, 1); }
-      }
-      if (revealEls.length) requestAnimationFrame(checkReveals);
-    }
-    requestAnimationFrame(checkReveals);
-  }
+<!-- ============ MISSION-CONTROL NAV ============ -->
+<nav class="chapter-nav" id="chapter-nav" aria-label="Chapter navigation">
+  <div class="nav-progress" aria-hidden="true"><i></i></div>
+</nav>
 
-  /* ---------------- Magnetic buttons ---------------- */
-  if (!reduceMotion && window.matchMedia('(hover:hover) and (pointer:fine)').matches) {
-    document.querySelectorAll('.magnetic').forEach(function (btn) {
-      btn.addEventListener('pointermove', function (e) {
-        const r = btn.getBoundingClientRect();
-        const mx = e.clientX - (r.left + r.width / 2);
-        const my = e.clientY - (r.top + r.height / 2);
-        btn.style.transform = 'translate(' + mx * 0.22 + 'px,' + my * 0.32 + 'px)';
-      });
-      btn.addEventListener('pointerleave', function () { btn.style.transform = ''; });
-    });
-  }
+<main id="main">
 
-  /* ---------------- Background fade after hero ---------------- */
-  /* ---------------- Background handled in onScroll (clamped fade) ---------------- */
+  <!-- ============ HERO ============ -->
+  <section id="hero" class="section" data-screen-label="Hero" data-chapter="hero">
+    <div class="hero-inner">
+      <div class="hero-kicker reveal in"><span class="pulse"></span><span>SYSTEM ONLINE · BUILD YOUR WORKFLOW</span></div>
+      <h1 class="hero-words">Build Your <span class="grad-text">Smarter Office</span><br />With WPS Office</h1>
+      <p class="hero-sub">All-in-one documents, spreadsheets, presentations, PDF tools, cloud sync, and AI productivity — unified in one powerful workspace.</p>
+      <div class="hero-actions">
+        <a class="btn btn--primary magnetic" href="#" data-affiliate>Get WPS Office <span class="arrow">→</span></a>
+        <a class="btn btn--ghost" href="#suite">Explore the Workflow</a>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat"><b class="grad-text">6-in-1</b><span>Productivity Modules</span></div>
+        <div class="hero-stat"><b class="grad-text">PDF</b><span>Toolkit Included</span></div>
+        <div class="hero-stat"><b class="grad-text">AI</b><span>Assistant Built&nbsp;In</span></div>
+      </div>
+    </div>
+    <div class="scroll-cue"><span>SCROLL</span><span class="track"></span></div>
+  </section>
 
-  /* ====================================================================
-     Scene-specific animations
-     ==================================================================== */
-  if (hasGSAP && !reduceMotion) {
+  <!-- ============ CH01 — CHAOS ============ -->
+  <section id="chaos" class="section" data-screen-label="Ch01 Chaos" data-chapter="chaos">
+    <div class="scene-bg" data-parallax="18" style="background-image:url('assets/depth-chaos.png')" aria-hidden="true"></div>
+    <div class="wrap">
+      <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">CHAPTER 01 — CHAOS</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1">Work Is <span class="grad-text">Fragmented</span></h2>
+      <p class="section-lead reveal reveal-d2">Documents in one app. Numbers in another. Slides somewhere else. PDFs you can't edit. Files scattered across devices. Every switch is friction — and friction is missed deadlines.</p>
+    </div>
 
-    /* CH01 chaos parallax */
-    gsap.utils.toArray('[data-parallax]').forEach(function (el) {
-      const s = parseFloat(el.dataset.parallax || '12');
-      gsap.to(el, {
-        yPercent: s, ease: 'none',
-        scrollTrigger: { trigger: el.closest('section'), start: 'top bottom', end: 'bottom top', scrub: true }
-      });
-    });
+    <div class="chaos-stage" id="chaos-stage" aria-hidden="true">
+      <div class="file-card glitch" style="left:6%;  top:8%;"  data-depth="1.6"><div class="ftype doc">writer.docx</div><div class="sk long"></div><div class="sk mid"></div><div class="sk short"></div></div>
+      <div class="file-card"        style="left:74%; top:4%;"  data-depth="2.4"><div class="ftype xls">budget.xlsx</div><div class="sk mid"></div><div class="sk long"></div><div class="sk short"></div></div>
+      <div class="file-card glitch" style="left:42%; top:0%;"  data-depth="1.1"><div class="ftype pdf">invoice.pdf</div><div class="sk short"></div><div class="sk long"></div><div class="sk mid"></div></div>
+      <div class="file-card"        style="left:18%; top:54%;" data-depth="2.8"><div class="ftype ppt">pitch.pptx</div><div class="sk long"></div><div class="sk short"></div></div>
+      <div class="file-card"        style="left:82%; top:50%;" data-depth="1.4"><div class="ftype doc">report.docx</div><div class="sk mid"></div><div class="sk long"></div></div>
+      <div class="file-card glitch" style="left:55%; top:60%;" data-depth="3.2"><div class="ftype xls">q3.xlsx</div><div class="sk long"></div><div class="sk mid"></div><div class="sk short"></div></div>
+      <div class="file-card"        style="left:34%; top:30%;" data-depth="0.7"><div class="ftype pdf">contract.pdf</div><div class="sk mid"></div><div class="sk short"></div></div>
+      <div class="friction-tag" style="left:10%; top:40%;">⚠ FORMATTING BROKEN</div>
+      <div class="friction-tag" style="left:60%; top:34%;">⚠ VERSION MISMATCH</div>
+      <div class="friction-tag" style="left:48%; top:86%;">⚠ APP-SWITCHING TAX</div>
+      <div class="friction-tag" style="left:78%; top:80%;">⚠ NO SYNC</div>
+    </div>
+  </section>
 
-    gsap.utils.toArray('#chaos-stage .file-card').forEach(function (card) {
-      const depth = parseFloat(card.dataset.depth || '1');
-      gsap.to(card, {
-        yPercent: -depth * 26, xPercent: (depth - 1.5) * 8, ease: 'none',
-        scrollTrigger: { trigger: '#chaos', start: 'top bottom', end: 'bottom top', scrub: true }
-      });
-    });
-    gsap.from('#chaos-stage .friction-tag', {
-      opacity: 0, scale: 0.7, stagger: 0.12, duration: 0.6,
-      scrollTrigger: { trigger: '#chaos-stage', start: 'top 70%' }
-    });
+  <!-- ============ CH02 — ONE SUITE ============ -->
+  <section id="suite" class="section" data-screen-label="Ch02 Suite" data-chapter="suite">
+    <div class="wrap">
+      <div class="chapter-tag reveal mx-auto" style="justify-content:center;"><span class="dot"></span><span class="hud">CHAPTER 02 — THE SUITE</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1">One Office Suite.<br /><span class="grad-text">Every Workflow.</span></h2>
+      <p class="section-lead reveal reveal-d2 mx-auto" style="margin-left:auto;margin-right:auto;">The scattered files snap into a single workspace. Six modules, one system — hover any node to see what it does for you.</p>
 
-    /* CH02 suite nodes */
-    gsap.from('#node-grid .node', {
-      y: 46, opacity: 0, stagger: 0.08, duration: 0.7, ease: 'power3.out',
-      scrollTrigger: { trigger: '#node-grid', start: 'top 82%' }
-    });
+      <div class="node-grid" id="node-grid">
+        <article class="node tilt" data-target="writer" role="link" style="--node-c:#4d8dff;" tabindex="0">
+          <span class="node-go" aria-hidden="true">→</span>
+          <div class="node-ico" data-ico="writer"></div>
+          <h3>Writer</h3>
+          <p class="node-desc">Documents, reports, letters &amp; resumes with full formatting.</p>
+          <p class="node-benefit">→ Opens &amp; saves common .doc / .docx files</p>
+        </article>
+        <article class="node tilt" data-target="sheets" role="link" style="--node-c:#2fe3a6;" tabindex="0">
+          <span class="node-go" aria-hidden="true">→</span>
+          <div class="node-ico" data-ico="sheets"></div>
+          <h3>Spreadsheet</h3>
+          <p class="node-desc">Formulas, tables, budgets, charts &amp; dashboards.</p>
+          <p class="node-benefit">→ Hundreds of functions, .xls / .xlsx ready</p>
+        </article>
+        <article class="node tilt" data-target="slides" role="link" style="--node-c:#ffb45e;" tabindex="0">
+          <span class="node-go" aria-hidden="true">→</span>
+          <div class="node-ico" data-ico="slides"></div>
+          <h3>Presentation</h3>
+          <p class="node-desc">Pitch decks &amp; report slides from ready templates.</p>
+          <p class="node-benefit">→ Plays nicely with .ppt / .pptx</p>
+        </article>
+        <article class="node tilt" data-target="pdf" role="link" style="--node-c:#ff7a7a;" tabindex="0">
+          <span class="node-go" aria-hidden="true">→</span>
+          <div class="node-ico" data-ico="pdf"></div>
+          <h3>PDF Tools</h3>
+          <p class="node-desc">Edit, convert, merge, annotate &amp; sign PDFs.</p>
+          <p class="node-benefit">→ A full PDF toolkit, no extra app</p>
+        </article>
+        <article class="node tilt" data-target="workflow" role="link" style="--node-c:#4fd9ff;" tabindex="0">
+          <span class="node-go" aria-hidden="true">→</span>
+          <div class="node-ico" data-ico="cloud"></div>
+          <h3>Cloud Sync</h3>
+          <p class="node-desc">Your files on every device, always current.</p>
+          <p class="node-benefit">→ Pick up exactly where you left off</p>
+        </article>
+        <article class="node tilt" data-target="ai" role="link" style="--node-c:#a06bff;" tabindex="0">
+          <span class="node-go" aria-hidden="true">→</span>
+          <div class="node-ico" data-ico="ai"></div>
+          <h3>AI Assistant</h3>
+          <p class="node-desc">Summarize, write, analyze &amp; transform — on command.</p>
+          <p class="node-benefit">→ Your productivity co-pilot, built in</p>
+        </article>
+      </div>
+    </div>
+  </section>
 
-    /* CH03 writer lines draw */
-    gsap.from('.writer-doc .doc-line', {
-      scaleX: 0, transformOrigin: 'left', stagger: 0.1, duration: 0.5, ease: 'power2.out',
-      scrollTrigger: { trigger: '#writer', start: 'top 65%' }
-    });
-    gsap.from('.ai-suggest', {
-      y: 16, opacity: 0, duration: 0.6, delay: 0.6,
-      scrollTrigger: { trigger: '#writer', start: 'top 65%' }
-    });
+  <!-- ============ CH03 — WRITER ============ -->
+  <section id="writer" class="section" data-screen-label="Ch03 Writer" data-chapter="writer">
+    <div class="wrap chapter-split">
+      <div class="ch-copy">
+        <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">CHAPTER 03 — WRITER</span><span class="line"></span></div>
+        <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,4.4vw,3.6rem);">Create Polished Documents <span class="grad-text">Faster</span></h2>
+        <ul class="feature-list reveal reveal-d2">
+          <li><span class="tick">✓</span>Professional documents from a click-to-start template library</li>
+          <li><span class="tick">✓</span>Rich formatting, styles, tables &amp; track changes</li>
+          <li><span class="tick">✓</span>Opens and saves common office document formats</li>
+          <li><span class="tick">✓</span>AI writing assistance — draft, rewrite &amp; polish in place</li>
+        </ul>
+        <a class="btn btn--ghost reveal reveal-d3" href="#" data-affiliate>Write with WPS <span class="arrow">→</span></a>
+      </div>
+      <div class="ch-visual reveal reveal-d1">
+        <div class="app-panel">
+          <div class="app-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">proposal.docx — WPS Writer</span><span class="app-chip">WRITER</span></div>
+          <div class="writer-toolbar"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="writer-doc">
+            <div class="doc-h"></div>
+            <div class="doc-line" style="width:94%"></div>
+            <div class="doc-line" style="width:88%"></div>
+            <div class="doc-line" style="width:96%"></div>
+            <div class="doc-line" style="width:70%"></div>
+            <div class="doc-line" style="width:90%"></div>
+            <div class="doc-line" style="width:55%"></div><span class="writer-caret"></span>
+            <div class="ai-suggest"><b>AI ·</b> Tighten this paragraph and fix two grammar issues?</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-    /* CH04 sheets: fill cells + chart rise */
-    gsap.from('#sheet-mock .sheet-cell.fill', {
-      backgroundColor: 'rgba(255,255,255,0)', stagger: 0.08, duration: 0.5,
-      scrollTrigger: { trigger: '#sheet-mock', start: 'top 72%' }
-    });
-    document.querySelectorAll('#chart-rise .bar').forEach(function (b) {
-      b.style.height = b.style.getPropertyValue('--h') || '60%';
-    });
-    gsap.fromTo('#chart-rise .bar', { scaleY: 0 }, {
-      scaleY: 1, transformOrigin: 'bottom', stagger: 0.08, duration: 0.7, ease: 'power3.out',
-      scrollTrigger: { trigger: '#chart-rise', start: 'top 80%' }
-    });
+  <!-- ============ CH04 — SPREADSHEET ============ -->
+  <section id="sheets" class="section" data-screen-label="Ch04 Sheets" data-chapter="sheets">
+    <div class="wrap chapter-split flip">
+      <div class="ch-copy">
+        <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">CHAPTER 04 — SPREADSHEET</span><span class="line"></span></div>
+        <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,4.4vw,3.6rem);">Turn Data Into <span class="grad-text">Decisions</span></h2>
+        <ul class="feature-list reveal reveal-d2">
+          <li><span class="tick">✓</span>Formulas, pivot tables &amp; conditional formatting</li>
+          <li><span class="tick">✓</span>Budget tracking, business reports &amp; forecasts</li>
+          <li><span class="tick">✓</span>Charts &amp; dashboards that update as you type</li>
+          <li><span class="tick">✓</span>Ask AI to analyze a range and surface the insight</li>
+        </ul>
+        <a class="btn btn--ghost reveal reveal-d3" href="#" data-affiliate>Crunch numbers in WPS <span class="arrow">→</span></a>
+      </div>
+      <div class="ch-visual reveal reveal-d1">
+        <div class="app-panel">
+          <div class="app-bar"><div class="dots"><i></i><i></i><i></i></div><span class="title">Q3-budget.xlsx — WPS Spreadsheet</span><span class="app-chip">SHEETS</span></div>
+          <div class="sheet-grid-mock" id="sheet-mock">
+            <div class="sheet-row"><div class="sheet-cell rownum"></div><div class="sheet-cell head">A</div><div class="sheet-cell head">B</div><div class="sheet-cell head">C</div><div class="sheet-cell head">D</div><div class="sheet-cell head">E</div></div>
+            <div class="sheet-row"><div class="sheet-cell rownum">1</div><div class="sheet-cell">Region</div><div class="sheet-cell">Q1</div><div class="sheet-cell">Q2</div><div class="sheet-cell">Q3</div><div class="sheet-cell">Total</div></div>
+            <div class="sheet-row"><div class="sheet-cell rownum">2</div><div class="sheet-cell">North</div><div class="sheet-cell num">4,120</div><div class="sheet-cell num">5,300</div><div class="sheet-cell num">6,180</div><div class="sheet-cell formula fill">=SUM</div></div>
+            <div class="sheet-row"><div class="sheet-cell rownum">3</div><div class="sheet-cell">South</div><div class="sheet-cell num">3,400</div><div class="sheet-cell num">4,010</div><div class="sheet-cell num">4,950</div><div class="sheet-cell formula fill">=SUM</div></div>
+            <div class="sheet-row"><div class="sheet-cell rownum">4</div><div class="sheet-cell">East</div><div class="sheet-cell num">2,980</div><div class="sheet-cell num">3,720</div><div class="sheet-cell num">4,400</div><div class="sheet-cell formula fill">=SUM</div></div>
+            <div class="sheet-row"><div class="sheet-cell rownum">5</div><div class="sheet-cell formula">=AVG</div><div class="sheet-cell num">3,500</div><div class="sheet-cell num">4,343</div><div class="sheet-cell num">5,176</div><div class="sheet-cell formula fill">↑ 18%</div></div>
+          </div>
+          <div class="chart-rise" id="chart-rise">
+            <span class="bar" style="--h:40%"></span><span class="bar" style="--h:62%"></span><span class="bar" style="--h:55%"></span><span class="bar" style="--h:80%"></span><span class="bar" style="--h:70%"></span><span class="bar" style="--h:96%"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-    /* CH05 slides — horizontal pinned scroll (desktop) */
-    const track = document.getElementById('slides-track');
-    if (track && window.matchMedia('(min-width: 760px)').matches) {
-      gsap.to(track, {
-        x: function () { return -(track.scrollWidth - window.innerWidth + 90); },
-        ease: 'none',
-        scrollTrigger: {
-          trigger: '#slides', start: 'top top', pin: true, anticipatePin: 1, scrub: 1,
-          end: function () { return '+=' + (track.scrollWidth - window.innerWidth + 200); },
-          invalidateOnRefresh: true
-        }
-      });
-    } else if (track) {
-      track.parentElement.style.overflowX = 'auto';
-      track.parentElement.style.paddingInline = 'clamp(20px,6vw,90px)';
-    }
+  <!-- ============ CH05 — PRESENTATION (horizontal) ============ -->
+  <section id="slides" class="section" data-screen-label="Ch05 Slides" data-chapter="slides">
+    <div class="wrap">
+      <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">CHAPTER 05 — PRESENTATION</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,5vw,4.4rem);">Tell Better <span class="grad-text">Stories</span></h2>
+      <p class="section-lead reveal reveal-d2">Business decks, pitches and report slides — built fast from templates and rolled out like a cinematic storyboard.</p>
+    </div>
+    <div class="slides-track-wrap">
+      <div class="slides-track" id="slides-track">
+        <article class="deck-slide"><span class="s-num">01 / COVER</span><h4 class="grad-text">FY26 Growth Plan</h4><p>A clean, confident opening slide built from a ready template in seconds.</p></article>
+        <article class="deck-slide"><span class="s-num">02 / METRICS</span><h4>The numbers that matter</h4><div class="s-bars"><i style="height:30%"></i><i style="height:55%"></i><i style="height:42%"></i><i style="height:78%"></i><i style="height:90%"></i></div><p>Charts drop straight in from your spreadsheet.</p></article>
+        <article class="deck-slide"><span class="s-num">03 / STRATEGY</span><h4>Three bold moves</h4><p>Structured layouts keep dense ideas legible and on-brand.</p></article>
+        <article class="deck-slide"><span class="s-num">04 / CLOSE</span><h4 class="grad-text">Let's build it.</h4><p>End on a strong, designed call to action — every time.</p></article>
+      </div>
+    </div>
+  </section>
 
-    /* CH06 pdf — pinned sequence */
-    setupPdf();
+  <!-- ============ CH06 — PDF (pinned) ============ -->
+  <section id="pdf" class="section" data-screen-label="Ch06 PDF" data-chapter="pdf" style="padding-top:0;padding-bottom:0;">
+    <div class="wrap" style="padding-top:clamp(90px,13vh,170px);">
+      <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">CHAPTER 06 — PDF</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,5vw,4.4rem);">Control Every <span class="grad-text">Document</span></h2>
+      <p class="section-lead reveal reveal-d2">Open, annotate, convert, merge and sign — a full PDF toolkit inside the same suite. Scroll to run the sequence.</p>
+    </div>
+    <div class="pin-stage" id="pdf-pin">
+      <div class="pdf-doc" id="pdf-doc">
+        <div class="pdf-h"></div>
+        <div class="pdf-l"></div><div class="pdf-l"></div><div class="pdf-l s"></div>
+        <div class="pdf-l" style="margin-top:22px"></div><div class="pdf-l"></div><div class="pdf-l"></div><div class="pdf-l s"></div>
+        <div class="pdf-l" style="margin-top:22px"></div><div class="pdf-l"></div><div class="pdf-l s"></div>
+        <div class="pdf-highlight" id="pdf-hl" style="top:120px"></div>
+        <div class="pdf-stamp" id="pdf-convert" style="top:38%;left:50%;transform:translate(-50%,-50%);color:var(--accent-a);font-size:1.4rem;">→ DOCX</div>
+        <div class="pdf-sign" id="pdf-sign"><svg viewBox="0 0 130 50"><path d="M4 38 C 20 8, 34 8, 40 30 S 60 50, 70 22 S 92 6, 110 30" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/></svg></div>
+      </div>
+      <div class="pdf-steps" id="pdf-steps">
+        <span class="pdf-step active">OPEN</span>
+        <span class="pdf-step">ANNOTATE</span>
+        <span class="pdf-step">CONVERT</span>
+        <span class="pdf-step">SIGN</span>
+        <span class="pdf-step">EXPORT</span>
+      </div>
+    </div>
+  </section>
 
-    /* CH07 ai prompts */
-    gsap.from('.ai-prompt', {
-      y: 22, opacity: 0, scale: 0.92, stagger: 0.1, duration: 0.55, ease: 'back.out(1.6)',
-      scrollTrigger: { trigger: '#ai-prompts', start: 'top 84%' }
-    });
+  <!-- ============ CH07 — AI (climax) ============ -->
+  <section id="ai" class="section" data-screen-label="Ch07 AI" data-chapter="ai">
+    <div class="scene-bg soft" data-parallax="12" style="background-image:url('assets/depth-ai.png')" aria-hidden="true"></div>
+    <canvas class="ai-video" id="ai-video" aria-hidden="true"></canvas>
+    <div class="ai-halo" aria-hidden="true"></div>
+    <div class="wrap center">
+      <div class="chapter-tag reveal mx-auto" style="justify-content:center;"><span class="dot"></span><span class="hud">CHAPTER 07 — AI PRODUCTIVITY</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2.4rem,6.5vw,5.6rem);">Work Faster <span class="grad-text">With AI</span></h2>
+      <p class="section-lead reveal reveal-d2 mx-auto" style="margin-left:auto;margin-right:auto;">An AI command center floating above your whole suite. Ask in plain language — it does the heavy lifting.</p>
+      <div class="ai-core reveal reveal-d2" aria-hidden="true"></div>
+      <div class="ai-prompts" id="ai-prompts">
+        <span class="ai-prompt"><span class="pfx">›</span>Summarize this document</span>
+        <span class="ai-prompt"><span class="pfx">›</span>Create a presentation from this report</span>
+        <span class="ai-prompt"><span class="pfx">›</span>Analyze this spreadsheet</span>
+        <span class="ai-prompt"><span class="pfx">›</span>Rewrite this paragraph</span>
+        <span class="ai-prompt"><span class="pfx">›</span>Convert this PDF</span>
+      </div>
+    </div>
+  </section>
 
-    /* CH08 workflow connect */
-    setupWorkflow();
+  <!-- ============ CH08 — WORKFLOW BUILDER ============ -->
+  <section id="workflow" class="section" data-screen-label="Ch08 Workflow" data-chapter="workflow">
+    <div class="wrap center">
+      <div class="chapter-tag reveal mx-auto" style="justify-content:center;"><span class="dot"></span><span class="hud">CHAPTER 08 — WORKFLOW</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1">Build Your Smart <span class="grad-text">Office Workflow</span></h2>
+      <p class="section-lead reveal reveal-d2 mx-auto" style="margin-left:auto;margin-right:auto;">Writer, Spreadsheet, Presentation, PDF, Cloud and AI connect into one glowing system. Scroll to wire it together.</p>
+    </div>
+    <div class="flow-stage" id="flow-stage" aria-hidden="true">
+      <svg class="flow-svg" id="flow-svg" viewBox="0 0 1000 460" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="flowGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="var(--accent-a)" />
+            <stop offset="100%" stop-color="var(--accent-b)" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <!-- nodes positioned by JS as % -->
+      <div class="flow-node" data-x="14" data-y="22" data-ico="writer"><span>WRITER</span></div>
+      <div class="flow-node" data-x="14" data-y="78" data-ico="sheets"><span>SHEETS</span></div>
+      <div class="flow-node" data-x="50" data-y="14" data-ico="slides"><span>SLIDES</span></div>
+      <div class="flow-node" data-x="86" data-y="22" data-ico="pdf"><span>PDF</span></div>
+      <div class="flow-node" data-x="86" data-y="78" data-ico="cloud"><span>CLOUD</span></div>
+      <div class="flow-node core" data-x="50" data-y="52" data-ico="ai"><span>WPS&nbsp;AI</span></div>
+    </div>
+  </section>
 
-  } else {
-    // reduced-motion static fallbacks
-    const track = document.getElementById('slides-track');
-    if (track) { track.parentElement.style.overflowX = 'auto'; track.parentElement.style.paddingInline = '20px'; }
-    document.querySelectorAll('#chart-rise .bar').forEach(function (b) { b.style.height = b.style.getPropertyValue('--h') || '60%'; b.style.transform = 'none'; });
-    const hl = document.getElementById('pdf-hl'); if (hl) { hl.style.opacity = 1; }
-    const sign = document.getElementById('pdf-sign'); if (sign) sign.style.opacity = 1;
-    document.querySelectorAll('.flow-node').forEach(function (n) { n.classList.add('lit'); });
-    layoutFlow(true);
-  }
+  <!-- ============ USE CASES ============ -->
+  <section id="usecases" class="section" data-screen-label="Use cases" data-chapter="usecases">
+    <div class="wrap">
+      <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">BUILT FOR EVERYONE</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,5vw,4.4rem);">Built For Every <span class="grad-text">Workflow</span></h2>
+      <div class="uc-grid" id="uc-grid"></div>
+    </div>
+  </section>
 
-  /* ---------------- PDF sequence ---------------- */
-  function setupPdf() {
-    const steps = Array.prototype.slice.call(document.querySelectorAll('#pdf-steps .pdf-step'));
-    function setStep(i) {
-      steps.forEach(function (s, k) { s.classList.toggle('active', k <= i); });
-    }
-    const signPath = document.querySelector('#pdf-sign path');
-    let len = 200;
-    if (signPath && signPath.getTotalLength) {
-      len = signPath.getTotalLength();
-      signPath.style.strokeDasharray = len; signPath.style.strokeDashoffset = len;
-    }
-    const tl = gsap.timeline({
-      scrollTrigger: {
-        trigger: '#pdf', start: 'top top', end: '+=2600', scrub: 1,
-        pin: '#pdf-pin', anticipatePin: 1, invalidateOnRefresh: true,
-        onUpdate: function (self) { setStep(Math.min(4, Math.floor(self.progress * 5))); }
-      }
-    });
-    tl.fromTo('#pdf-hl', { opacity: 0, scaleX: 0, transformOrigin: 'left' }, { opacity: 1, scaleX: 1, duration: 1 })
-      .to('#pdf-convert', { opacity: 1, duration: 0.8 }, '+=0.4')
-      .to('#pdf-convert', { opacity: 0, duration: 0.5 }, '+=0.5')
-      .to('#pdf-sign', { opacity: 1, duration: 0.2 }, '<')
-      .to(signPath, { strokeDashoffset: 0, duration: 1.1, ease: 'power1.inOut' }, '<')
-      .to('#pdf-doc', { scale: 0.94, boxShadow: '0 0 80px -10px var(--glow-a)', duration: 0.8 }, '+=0.4');
-  }
+  <!-- ============ WHY WPS ============ -->
+  <section id="why" class="section" data-screen-label="Why WPS" data-chapter="why">
+    <div class="wrap">
+      <div class="chapter-tag reveal"><span class="dot"></span><span class="hud">WHY WPS OFFICE</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,5vw,4.4rem);">One Suite That <span class="grad-text">Earns Its Place</span></h2>
+      <div class="why-grid" id="why-grid"></div>
+    </div>
+  </section>
 
-  /* ---------------- Workflow connect ---------------- */
-  function layoutFlow(staticAll) {
-    const stage = document.getElementById('flow-stage');
-    if (!stage) return;
-    const nodes = Array.prototype.slice.call(stage.querySelectorAll('.flow-node'));
-    nodes.forEach(function (n) {
-      n.style.left = n.dataset.x + '%';
-      n.style.top = n.dataset.y + '%';
-    });
-    const svg = document.getElementById('flow-svg');
-    const core = nodes.find(function (n) { return n.classList.contains('core'); });
-    const cx = parseFloat(core.dataset.x) * 10, cy = parseFloat(core.dataset.y) * 4.6;
-    // clear existing paths
-    svg.querySelectorAll('path').forEach(function (p) { p.remove(); });
-    const outers = nodes.filter(function (n) { return !n.classList.contains('core'); });
-    return outers.map(function (n) {
-      const x = parseFloat(n.dataset.x) * 10, y = parseFloat(n.dataset.y) * 4.6;
-      const mx = (x + cx) / 2;
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', 'M ' + x + ' ' + y + ' C ' + mx + ' ' + y + ', ' + mx + ' ' + cy + ', ' + cx + ' ' + cy);
-      path.setAttribute('pathLength', '1');
-      svg.appendChild(path);
-      if (staticAll) path.style.strokeDashoffset = '0';
-      return { path: path, node: n };
-    });
-  }
-  function setupWorkflow() {
-    const pairs = layoutFlow(false);
-    if (!pairs) return;
-    const core = document.querySelector('.flow-node.core');
-    gsap.set(core, { opacity: 1 });
-    gsap.set(core, { boxShadow: '0 0 40px -6px var(--glow-b)' });
-    const tl = gsap.timeline({
-      scrollTrigger: { trigger: '#workflow', start: 'top 68%', end: 'bottom 70%', scrub: 1 }
-    });
-    pairs.forEach(function (p) {
-      tl.to(p.node, { opacity: 1, borderColor: 'color-mix(in oklch, var(--accent-a) 55%, transparent)', boxShadow: '0 0 30px -8px var(--glow-a)', duration: 0.6 })
-        .to(p.path, { strokeDashoffset: 0, duration: 0.9 }, '<0.1');
-    });
-  }
+  <!-- ============ FAQ ============ -->
+  <section id="faq" class="section" data-screen-label="FAQ" data-chapter="faq">
+    <div class="wrap center">
+      <div class="chapter-tag reveal mx-auto" style="justify-content:center;"><span class="dot"></span><span class="hud">QUESTIONS</span><span class="line"></span></div>
+      <h2 class="section-title reveal reveal-d1" style="font-size:clamp(2rem,5vw,4.4rem);">Before You <span class="grad-text">Download</span></h2>
+    </div>
+    <div class="faq-list" id="faq-list"></div>
+  </section>
 
-  /* keep ScrollTrigger + Lenis honest after fonts/images settle */
-  if (hasGSAP) {
-    function syncScroll() { ScrollTrigger.refresh(); if (lenis) lenis.resize(); }
-    window.addEventListener('load', syncScroll);
-    setTimeout(syncScroll, 600);
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(syncScroll);
-  }
-})();
+  <!-- ============ FINAL CTA ============ -->
+  <section id="cta" class="section" data-screen-label="Final CTA" data-chapter="cta">
+    <div class="scene-bg" data-parallax="16" style="background-image:url('assets/depth-cta.png')" aria-hidden="true"></div>
+    <div class="cta-glow" aria-hidden="true"></div>
+    <div class="wrap center">
+      <div class="chapter-tag reveal mx-auto" style="justify-content:center;"><span class="dot"></span><span class="hud">CHAPTER 09 — START</span><span class="line"></span></div>
+      <h2 class="reveal reveal-d1">Your Smart Office<br /><span class="grad-text">Starts Now</span></h2>
+      <p class="section-lead reveal reveal-d2 mx-auto" style="margin-left:auto;margin-right:auto;">Every module — Writer, Sheets, Slides, PDF, Cloud and AI — in one workspace. One download away.</p>
+      <div class="cta-actions reveal reveal-d2">
+        <a class="btn btn--primary magnetic" href="#" data-affiliate>Download WPS Office Today <span class="arrow">→</span></a>
+        <a class="btn btn--ghost" href="#suite">Start Building Your Workflow</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer data-screen-label="Footer">
+  <div class="footer-grid">
+    <a class="brand" href="#hero"><span class="brand-mark">S</span><span class="brand-name">SmartOffice<small>WORKFLOW GUIDE</small></span></a>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="#suite">The Suite</a><a href="#ai">AI</a><a href="#usecases">Use Cases</a><a href="#faq">FAQ</a><a href="#" data-affiliate>Get WPS Office</a>
+    </nav>
+  </div>
+  <p class="affil-disclosure"><b>Affiliate disclosure.</b> As an affiliate, we may earn a commission if you purchase through our links, at no extra cost to you. SmartOffice Workflow Guide is an independent resource and is not affiliated with or endorsed by the makers of WPS Office. Product names and logos are property of their respective owners.</p>
+</footer>
+
+<!-- Tweaks mount -->
+<div id="tweaks-root"></div>
+
+<!-- ============ LIBS ============ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://unpkg.com/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
+
+<!-- App (vanilla) -->
+<script src="js/icons.js"></script>
+<script src="js/content.js"></script>
+<script src="js/scene.js"></script>
+<script src="js/loops.js"></script>
+<script src="js/story.js"></script>
+<script src="js/interactions.js"></script>
+
+<!-- Tweaks (React island) -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="js/tweaks-app.jsx"></script>
+
+</body>
+</html>
